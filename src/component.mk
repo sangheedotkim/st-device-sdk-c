@@ -63,6 +63,7 @@ endif
 
 ifeq ($(CONFIG_STDK_IOT_CORE_SECURITY_BACKEND_SOFTWARE),y)
 COMPONENT_SRCDIRS += security
+COMPONENT_SRCDIRS += security/helper/libsodium
 COMPONENT_SRCDIRS += security/backend/software
 endif
 
