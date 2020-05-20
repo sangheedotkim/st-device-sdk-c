@@ -64,6 +64,9 @@ endif
 ifeq ($(CONFIG_STDK_IOT_CORE_SECURITY_BACKEND_SOFTWARE),y)
 COMPONENT_SRCDIRS += security
 COMPONENT_SRCDIRS += security/helper/libsodium
+ifdef CONFIG_STDK_IOT_CORE_USE_MBEDTLS
+COMPONENT_SRCDIRS += security/helper/mbedtls
+endif
 COMPONENT_SRCDIRS += security/backend/software
 endif
 
