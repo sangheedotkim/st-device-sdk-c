@@ -501,8 +501,8 @@ iot_error_t _es_keyinfo_handler(struct iot_context *ctx, char *in_payload, char 
 	iot_crypto_ecdh_params_t params;
 	iot_error_t err = IOT_ERROR_NONE;
 	unsigned char val;
-	unsigned char key_tsec_curve[IOT_CRYPTO_ED25519_LEN];
-	unsigned char key_spub_sign[IOT_CRYPTO_ED25519_LEN];
+	unsigned char key_tsec_curve[IOT_SECURITY_ED25519_LEN];
+	unsigned char key_spub_sign[IOT_SECURITY_ED25519_LEN];
 	unsigned char key_rand[IOT_SECURITY_SHA256_LEN];
 	unsigned char *decode_buf = NULL;
 	unsigned char *master_secret = NULL;
@@ -538,7 +538,7 @@ iot_error_t _es_keyinfo_handler(struct iot_context *ctx, char *in_payload, char 
 		IOT_WARN("spub decode error %d", err);
 		err = IOT_ERROR_EASYSETUP_BASE64_DECODE_ERROR;
 		goto exit;
-	} else if (spub_len != IOT_CRYPTO_ED25519_LEN) {
+	} else if (spub_len != IOT_SECURITY_ED25519_LEN) {
 		IOT_WARN("invalid spub length : %u", spub_len);
 		err = IOT_ERROR_EASYSETUP_BASE64_DECODE_ERROR;
 		goto exit;
@@ -589,7 +589,7 @@ iot_error_t _es_keyinfo_handler(struct iot_context *ctx, char *in_payload, char 
 		goto exit_pk;
 	}
 
-	err = iot_crypto_ed25519_convert_seckey(pk_info.seckey, key_tsec_curve);
+	err = iot_security_ed25519_convert_seckey(pk_info.seckey, key_tsec_curve);
 	if (err) {
 		IOT_ERROR("Cannot convert seckey of things %d", err);
 		err = IOT_ERROR_EASYSETUP_SHARED_KEY_CREATION_FAIL;

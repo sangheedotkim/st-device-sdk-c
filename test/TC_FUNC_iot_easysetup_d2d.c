@@ -74,10 +74,10 @@ static char sample_hashed_sn_b64url[] = "LWpcna0H5C-NEFcoRXRRBUWFqeU1XmOeyaigeYc
 #define TEST_SRAND "OTI0NTU3YjQ5OTRjNmRiN2UxOTAzMzAwYzc1ZmRlMmFmNTYwMDJiYmZhOWQzMGZjZGMwZWJiMDYwYWZlOWIxZg=="
 
 struct tc_key_pair {
-    unsigned char curve25519_pk[IOT_CRYPTO_ED25519_LEN];
-    unsigned char ed25519_pk[IOT_CRYPTO_ED25519_LEN];
-    unsigned char curve25519_sk[IOT_CRYPTO_ED25519_LEN];
-    unsigned char ed25519_sk[IOT_CRYPTO_ED25519_LEN];
+    unsigned char curve25519_pk[IOT_SECURITY_ED25519_LEN];
+    unsigned char ed25519_pk[IOT_SECURITY_ED25519_LEN];
+    unsigned char curve25519_sk[IOT_SECURITY_ED25519_LEN];
+    unsigned char ed25519_sk[IOT_SECURITY_ED25519_LEN];
 };
 
 struct tc_key_pair* SERVER_KEYPAIR;
@@ -1111,7 +1111,7 @@ static char *_generate_post_keyinfo_payload(int year, char *time_to_set, size_t 
     iot_error_t err;
     size_t out_length;
     unsigned char *curve25519_server_pk_b64;
-    size_t curve25519_server_pk_b64_len = IOT_SECURITY_B64_ENCODE_LEN(IOT_CRYPTO_ED25519_LEN) + 1;
+    size_t curve25519_server_pk_b64_len = IOT_SECURITY_B64_ENCODE_LEN(IOT_SECURITY_ED25519_LEN) + 1;
     char datetime[32];
     char regionaldatetime[32];
     char timezoneid[16];
@@ -1198,17 +1198,17 @@ static struct tc_key_pair* _generate_test_keypair(const unsigned char *pk_b64url
     err = iot_security_base64_decode(pk_b64url, pk_b64url_len,
                                            keypair->ed25519_pk, sizeof(keypair->ed25519_pk), &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
-    assert_int_equal(out_length, IOT_CRYPTO_ED25519_LEN);
+    assert_int_equal(out_length, IOT_SECURITY_ED25519_LEN);
 
     err = iot_security_base64_decode(sk_b64url, sk_b64url_len,
                                            keypair->ed25519_sk, sizeof(keypair->ed25519_sk), &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
-    assert_int_equal(out_length, IOT_CRYPTO_ED25519_LEN);
+    assert_int_equal(out_length, IOT_SECURITY_ED25519_LEN);
 
-    err = iot_crypto_ed25519_convert_pubkey(keypair->ed25519_pk, keypair->curve25519_pk);
+    err = iot_security_ed25519_convert_pubkey(keypair->ed25519_pk, keypair->curve25519_pk);
     assert_int_equal(err, IOT_ERROR_NONE);
 
-    err = iot_crypto_ed25519_convert_seckey(keypair->ed25519_sk, keypair->curve25519_sk);
+    err = iot_security_ed25519_convert_seckey(keypair->ed25519_sk, keypair->curve25519_sk);
     assert_int_equal(err, IOT_ERROR_NONE);
 
     return keypair;
