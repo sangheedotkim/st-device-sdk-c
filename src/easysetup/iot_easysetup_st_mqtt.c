@@ -28,7 +28,6 @@
 #include "iot_nv_data.h"
 #include "iot_debug.h"
 #include "iot_wt.h"
-#include "iot_crypto.h"
 #include "iot_os_util.h"
 #include "iot_bsp_system.h"
 #include "security/iot_security_manager.h"
