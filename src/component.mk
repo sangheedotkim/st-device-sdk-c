@@ -54,12 +54,6 @@ COMPONENT_SRCDIRS += crypto
 ifdef CONFIG_STDK_IOT_CORE_USE_MBEDTLS
 COMPONENT_SRCDIRS += crypto/mbedtls
 endif
-ifdef CONFIG_STDK_IOT_CORE_FS_SW_ENCRYPTION
-COMPONENT_ADD_LDFLAGS += $(COMPONENT_PATH)/crypto/ss/lib/libiot_crypto_ss.a
-COMPONENT_ADD_LINKER_DEPS := $(COMPONENT_PATH)/crypto/ss/lib/libiot_crypto_ss.a
-else
-COMPONENT_SRCDIRS += crypto/ss
-endif
 
 ifeq ($(CONFIG_STDK_IOT_CORE_SECURITY_BACKEND_SOFTWARE),y)
 COMPONENT_SRCDIRS += security
@@ -68,6 +62,9 @@ ifdef CONFIG_STDK_IOT_CORE_USE_MBEDTLS
 COMPONENT_SRCDIRS += security/helper/mbedtls
 endif
 COMPONENT_SRCDIRS += security/backend/software
+ifeq ($(CONFIG_STDK_IOT_CORE_FS_SW_ENCRYPTION),y)
+COMPONENT_ADD_LDFLAGS += -L $(COMPONENT_PATH)/security/backend/software/lib/esp -liot_security_ss
+endif
 endif
 
 COMPONENT_SRCDIRS += easysetup
