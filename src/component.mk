@@ -66,6 +66,9 @@ COMPONENT_ADD_LDFLAGS += -L $(COMPONENT_PATH)/security/backend/software/lib/esp 
 endif
 else ifeq ($(CONFIG_STDK_IOT_CORE_SECURITY_BACKEND_HARDWARE),y)
 COMPONENT_SRCDIRS += security/backend/hardware
+ifeq ($(CONFIG_STDK_IOT_CORE_SECURITY_BACKEND_HARDWARE_VIRTUAL),y)
+COMPONENT_SRCDIRS += security/backend/hardware/virtual
+endif
 endif
 
 COMPONENT_SRCDIRS += easysetup
