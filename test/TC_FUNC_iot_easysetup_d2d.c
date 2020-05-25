@@ -31,6 +31,7 @@
 #include <errno.h>
 #include <iot_util.h>
 #include <security/iot_security_crypto.h>
+#include <security/iot_security_ecdh.h>
 #include <security/iot_security_helper.h>
 #include "TC_MOCK_functions.h"
 
@@ -1591,7 +1592,8 @@ static iot_security_cipher_params_t* _generate_cipher(unsigned char *pk, unsigne
     iot_error_t err;
     iot_security_context_t *security_context;
     iot_security_cipher_params_t* cipher = NULL;
-    iot_crypto_ecdh_params_t ecdh_param;
+    iot_security_ecdh_params_t ecdh_params = { 0 };
+    iot_security_buffer_t shared_secret = { 0 };
     unsigned char hash_token[IOT_SECURITY_SHA256_LEN];
     unsigned char *master_secret = NULL;
 
@@ -1600,6 +1602,8 @@ static iot_security_cipher_params_t* _generate_cipher(unsigned char *pk, unsigne
 
     security_context = iot_security_init();
     assert_non_null(security_context);
+    err = iot_security_ecdh_init(security_context);
+    assert_int_equal(err, IOT_ERROR_NONE);
 
     cipher = (iot_security_cipher_params_t*) malloc(sizeof(iot_security_cipher_params_t));
     assert_non_null(cipher);
@@ -1619,20 +1623,26 @@ static iot_security_cipher_params_t* _generate_cipher(unsigned char *pk, unsigne
     memset(hash_token, '\0', sizeof(hash_token));
     _generate_hash_token(hash_token, sizeof(hash_token));
 
-    ecdh_param.s_pubkey = pk;
-    ecdh_param.t_seckey = sk;
-    ecdh_param.hash_token = hash_token;
-    ecdh_param.hash_token_len = IOT_SECURITY_SHA256_LEN;
+    ecdh_params.t_seckey.p = sk;
+    ecdh_params.t_seckey.len = IOT_SECURITY_ED25519_LEN;
+    ecdh_params.c_pubkey.p = pk;
+    ecdh_params.c_pubkey.len = IOT_SECURITY_ED25519_LEN;
+    ecdh_params.salt.p = hash_token;
+    ecdh_params.salt.len = sizeof(hash_token);
+    err = iot_security_ecdh_set_params(security_context, &ecdh_params);
+    assert_int_equal(err, IOT_ERROR_NONE);
+
     master_secret = malloc(IOT_SECURITY_SECRET_LEN + 1);
     assert_non_null(master_secret);
     memset(master_secret, '\0', IOT_SECURITY_SECRET_LEN + 1);
-    err = iot_crypto_ecdh_gen_master_secret(master_secret, IOT_SECURITY_SECRET_LEN, &ecdh_param);
+    err = iot_security_ecdh_compute_shared_secret(security_context, &shared_secret);
     assert_int_equal(err, IOT_ERROR_NONE);
 
     cipher->type = IOT_SECURITY_KEY_TYPE_AES256;
-    cipher->key.p = master_secret;
-    cipher->key.len = IOT_SECURITY_SECRET_LEN;
+    cipher->key = shared_secret;
 
+    err = iot_security_ecdh_deinit(security_context);
+    assert_int_equal(err, IOT_ERROR_NONE);
     err = iot_security_deinit(security_context);
     assert_int_equal(err, IOT_ERROR_NONE);
 
