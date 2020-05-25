@@ -30,6 +30,7 @@
 #include <regex.h>
 #include <errno.h>
 #include <iot_util.h>
+#include <security/iot_security_crypto.h>
 #include <security/iot_security_helper.h>
 #include "TC_MOCK_functions.h"
 
@@ -84,9 +85,9 @@ struct tc_key_pair* SERVER_KEYPAIR;
 struct tc_key_pair* DEVICE_KEYPAIR;
 static struct tc_key_pair* _generate_test_keypair(const unsigned char *pk_b64url, size_t pk_b64url_len,
                                                   const unsigned char *sk_b64url, size_t sk_b64url_len);
-static void _free_cipher(iot_crypto_cipher_info_t *cipher);
-static char *_decode_and_decrypt_message(iot_crypto_cipher_info_t *cipher, unsigned char *b64url_aes256_message, size_t b64url_aes256_message_length);
-static char *_encrypt_and_encode_message(iot_crypto_cipher_info_t *cipher, unsigned char *message, size_t message_length);
+static void _free_cipher(iot_security_cipher_params_t *cipher);
+static char *_decode_and_decrypt_message(iot_security_cipher_params_t *cipher, unsigned char *b64url_aes256_message, size_t b64url_aes256_message_length);
+static char *_encrypt_and_encode_message(iot_security_cipher_params_t *cipher, unsigned char *message, size_t message_length);
 
 int TC_iot_easysetup_d2d_setup(void **state)
 {
@@ -114,9 +115,11 @@ int TC_iot_easysetup_d2d_setup(void **state)
     err = iot_api_device_info_load(sample_device_info, sizeof(sample_device_info), device_info);
     assert_int_equal(err, IOT_ERROR_NONE);
 
-    context->es_crypto_cipher_info = (iot_crypto_cipher_info_t *) malloc(sizeof(iot_crypto_cipher_info_t));
-    assert_non_null(context->es_crypto_cipher_info);
-    memset(context->es_crypto_cipher_info, '\0', sizeof(iot_crypto_cipher_info_t));
+    context->easysetup_security_context = iot_security_init();
+    assert_non_null(context->easysetup_security_context);
+
+    err = iot_security_cipher_init(context->easysetup_security_context);
+    assert_int_equal(err, IOT_ERROR_NONE);
 
     SERVER_KEYPAIR = _generate_test_keypair(TEST_SERVER_PUBLIC_B64_KEY, strlen(TEST_SERVER_PUBLIC_B64_KEY),
                                             TEST_SERVER_SECRET_B64_KEY, strlen(TEST_SERVER_SECRET_B64_KEY));
@@ -136,13 +139,14 @@ int TC_iot_easysetup_d2d_teardown(void **state)
     struct iot_context *context = (struct iot_context *)*state;
     struct iot_devconf_prov_data *devconf = &context->devconf;
     struct iot_device_info *device_info = &context->device_info;
-    iot_crypto_cipher_info_t *cipher_info = context->es_crypto_cipher_info;
+    iot_security_context_t *security_context = context->easysetup_security_context;
 
     do_not_use_mock_iot_os_malloc_failure();
 
     iot_api_onboarding_config_mem_free(devconf);
     iot_api_device_info_mem_free(device_info);
-    _free_cipher(cipher_info);
+    iot_security_cipher_deinit(security_context);
+    iot_security_deinit(security_context);
 
     err = iot_nv_erase_prov_data();
     assert_int_equal(err, IOT_ERROR_NONE);
@@ -314,26 +318,26 @@ void TC_STATIC_es_deviceinfo_handler_success(void **state)
 
 // Static function of STDK declared to test
 extern iot_error_t _es_keyinfo_handler(struct iot_context *ctx, char *in_payload, char **out_payload);
-extern iot_error_t _es_crypto_cipher_gen_iv(iot_crypto_cipher_info_t *iv_info);
+extern iot_error_t _es_crypto_cipher_gen_iv(iot_security_buffer_t *iv_buffer);
 
 // static functions for test
 static char *_generate_post_keyinfo_payload(int year, char *time_to_set, size_t time_to_set_len);
-static iot_crypto_cipher_info_t* _generate_server_cipher(unsigned char *iv_data, size_t iv_length);
-static iot_crypto_cipher_info_t* _generate_device_cipher(unsigned char *iv_data, size_t iv_length);
-static void assert_keyinfo(char *payload, iot_crypto_cipher_info_t *server_cipher, unsigned int expected_otm_support);
-void assert_cipher_iv(iot_crypto_cipher_info_t cipher);
+static iot_security_cipher_params_t* _generate_server_cipher(unsigned char *iv_data, size_t iv_length);
+static iot_security_cipher_params_t* _generate_device_cipher(unsigned char *iv_data, size_t iv_length);
+static void assert_keyinfo(char *payload, iot_security_cipher_params_t *server_cipher, unsigned int expected_otm_support);
+void assert_iv_buffer(iot_security_buffer_t iv_buffer);
 
 void TC_STATIC_es_crypto_cipher_gen_iv_success(void **state)
 {
     iot_error_t err;
-    iot_crypto_cipher_info_t cipher;
+    iot_security_buffer_t iv_buffer = { 0 };
     UNUSED(state);
 
     // When
-    err = _es_crypto_cipher_gen_iv(&cipher);
+    err = _es_crypto_cipher_gen_iv(&iv_buffer);
     // Then
     assert_int_equal(err, IOT_ERROR_NONE);
-    assert_cipher_iv(cipher);
+    assert_iv_buffer(iv_buffer);
 }
 
 void TC_STATIC_es_keyinfo_handler_success(void **state)
@@ -342,18 +346,22 @@ void TC_STATIC_es_keyinfo_handler_success(void **state)
     char *out_payload = NULL;
     char *in_payload = NULL;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_buffer_t iv_buffer = { 0 };
+    iot_security_cipher_params_t device_cipher = { IOT_SECURITY_KEY_TYPE_AES256, 0 };
+    iot_security_cipher_params_t *server_cipher;
     char *time_to_set;
 
     // Given: time is under 32bit time_t (Y2038)
     context = (struct iot_context *)*state;
-    err = _es_crypto_cipher_gen_iv(context->es_crypto_cipher_info);
+    err = _es_crypto_cipher_gen_iv(&iv_buffer);
+    device_cipher.iv = iv_buffer;
+    err = iot_security_cipher_set_params(context->easysetup_security_context, &device_cipher);
     assert_int_equal(err, IOT_ERROR_NONE);
     time_to_set = calloc(sizeof(char), 11);
     assert_non_null(time_to_set);
     in_payload = _generate_post_keyinfo_payload(2020, time_to_set, 11);
     expect_string(__wrap_iot_bsp_system_set_time_in_sec, time_in_sec, time_to_set);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    server_cipher = _generate_server_cipher(iv_buffer.p, iv_buffer.len);
     // When
     err = _es_keyinfo_handler(context, in_payload, &out_payload);
     // Then
@@ -363,6 +371,7 @@ void TC_STATIC_es_keyinfo_handler_success(void **state)
 
     // Local teardown
     _free_cipher(server_cipher);
+    free(iv_buffer.p);
     free(out_payload);
     free(in_payload);
     free(time_to_set);
@@ -374,18 +383,23 @@ void TC_STATIC_es_keyinfo_handler_success_with_y2038(void **state)
     char *out_payload = NULL;
     char *in_payload = NULL;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_buffer_t iv_buffer = { 0 };
+    iot_security_cipher_params_t device_cipher = { IOT_SECURITY_KEY_TYPE_AES256, 0 };
+    iot_security_cipher_params_t *server_cipher;
     char *time_to_set;
 
     // Given: time is over 32bit time_t (Y2038)
     context = (struct iot_context *)*state;
-    err = _es_crypto_cipher_gen_iv(context->es_crypto_cipher_info);
+    err = _es_crypto_cipher_gen_iv(&iv_buffer);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    device_cipher.iv = iv_buffer;
+    err = iot_security_cipher_set_params(context->easysetup_security_context, &device_cipher);
     assert_int_equal(err, IOT_ERROR_NONE);
     time_to_set = calloc(sizeof(char), 11);
     assert_non_null(time_to_set);
     in_payload = _generate_post_keyinfo_payload(2038, time_to_set, 11);
     expect_string(__wrap_iot_bsp_system_set_time_in_sec, time_in_sec, time_to_set);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    server_cipher = _generate_server_cipher(iv_buffer.p, iv_buffer.len);
     // When
     err = _es_keyinfo_handler(context, in_payload, &out_payload);
     // Then
@@ -395,6 +409,7 @@ void TC_STATIC_es_keyinfo_handler_success_with_y2038(void **state)
 
     // Local teardown
     _free_cipher(server_cipher);
+    free(iv_buffer.p);
     free(out_payload);
     free(in_payload);
     free(time_to_set);
@@ -416,8 +431,8 @@ extern iot_error_t _es_wifiprovisioninginfo_handler(struct iot_context *ctx, cha
 
 // static functions for test
 static void _generate_wifi_scan_list(struct iot_context *context, uint16_t amount);
-static char* _generate_post_wifiprovisioninginfo_payload(iot_crypto_cipher_info_t *cipher, struct test_wifi_provisioning_data prov);
-static void assert_lookup_id(const char *payload, iot_crypto_cipher_info_t *cipher);
+static char* _generate_post_wifiprovisioninginfo_payload(iot_security_cipher_params_t *cipher, struct test_wifi_provisioning_data prov);
+static void assert_lookup_id(const char *payload, iot_security_cipher_params_t *cipher);
 static void assert_wifi_provisioning(struct iot_context *context, struct test_wifi_provisioning_data prov);
 
 void TC_STATIC_es_wifiprovisioninginfo_handler_success(void **state)
@@ -426,7 +441,8 @@ void TC_STATIC_es_wifiprovisioninginfo_handler_success(void **state)
     char *out_payload = NULL;
     char *in_payload = NULL;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
     unsigned char device_mac[IOT_WIFI_MAX_BSSID_LEN] = { 0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0x01 };
     struct test_wifi_provisioning_data wifi_prov = {
             .ssid = "fakeSsid_05_XXXXXX",
@@ -441,9 +457,11 @@ void TC_STATIC_es_wifiprovisioninginfo_handler_success(void **state)
 
     // Given
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
     _generate_wifi_scan_list(context, 5);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
     in_payload = _generate_post_wifiprovisioninginfo_payload(server_cipher, wifi_prov);
     will_return(__wrap_iot_bsp_wifi_get_mac, cast_ptr_to_largest_integral_type(device_mac));
     will_return(__wrap_iot_bsp_wifi_get_mac, IOT_ERROR_NONE);
@@ -468,7 +486,8 @@ void TC_STATIC_es_wifiprovisioninginfo_handler_success_without_authtype(void **s
     char *out_payload = NULL;
     char *in_payload = NULL;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
     unsigned char device_mac[IOT_WIFI_MAX_BSSID_LEN] = { 0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0x01 };
     struct test_wifi_provisioning_data sent_wifi_prov = {
             .ssid = "fakeSsid_05_XXXXXX",
@@ -494,9 +513,11 @@ void TC_STATIC_es_wifiprovisioninginfo_handler_success_without_authtype(void **s
 
     // Given
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
     _generate_wifi_scan_list(context, 5);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
     in_payload = _generate_post_wifiprovisioninginfo_payload(server_cipher, sent_wifi_prov);
     will_return(__wrap_iot_bsp_wifi_get_mac, cast_ptr_to_largest_integral_type(device_mac));
     will_return(__wrap_iot_bsp_wifi_get_mac, IOT_ERROR_NONE);
@@ -518,7 +539,7 @@ void TC_STATIC_es_wifiprovisioninginfo_handler_success_without_authtype(void **s
 // Static function of STDK declared to test
 extern iot_error_t _es_wifiscaninfo_handler(struct iot_context *ctx, char **out_payload);
 
-static void assert_wifiscaninfo_payload(iot_crypto_cipher_info_t *cipher, char *payload, int num_of_scanlist);
+static void assert_wifiscaninfo_payload(iot_security_cipher_params_t *cipher, char *payload, int num_of_scanlist);
 
 void TC_STATIC_es_wifiscaninfo_handler_invalid_parameters(void **state)
 {
@@ -548,12 +569,15 @@ void TC_STATIC_es_wifiscaninfo_handler_success(void **state)
     iot_error_t err;
     char *out_payload = NULL;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
 
     // Given
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
     _generate_wifi_scan_list(context, 20);
     // When
     err = _es_wifiscaninfo_handler(context, &out_payload);
@@ -570,9 +594,9 @@ void TC_STATIC_es_wifiscaninfo_handler_success(void **state)
 // Static function of STDK declared to test
 extern iot_error_t _es_confirminfo_handler(struct iot_context *ctx, char *in_payload, char **out_payload);
 
-static char *_generate_confirminfo_payload(iot_crypto_cipher_info_t *cipher, enum ownership_validation_feature feature,
+static char *_generate_confirminfo_payload(iot_security_cipher_params_t *cipher, enum ownership_validation_feature feature,
                                     const char *serial_number_for_qr);
-static void assert_empty_json(iot_crypto_cipher_info_t *cipher, char *payload);
+static void assert_empty_json(iot_security_cipher_params_t *cipher, char *payload);
 
 void TC_STATIC_es_confirminfo_handler_null_parameters(void **state)
 {
@@ -580,12 +604,15 @@ void TC_STATIC_es_confirminfo_handler_null_parameters(void **state)
     char *in_payload;
     char *out_payload;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
 
     // Given: in_payload null
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
     in_payload = NULL;
     out_payload = NULL;
     // When
@@ -616,12 +643,15 @@ void TC_STATIC_es_confirminfo_handler_out_ranged_otm_feature(void **state)
     char *in_payload;
     char *out_payload;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
 
     // Given
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
     in_payload = _generate_confirminfo_payload(server_cipher, OVF_BIT_MAX_FEATURE, NULL);
     out_payload = NULL;
     // When
@@ -641,15 +671,19 @@ void TC_STATIC_es_confirminfo_handler_justworks_and_pin(void **state)
     char *in_payload;
     char *out_payload;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
 
     // Given: common
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
     context->usr_events = iot_os_eventgroup_create();
     context->iot_events = iot_os_eventgroup_create();
     context->cmd_queue = iot_os_queue_create(IOT_QUEUE_LENGTH, sizeof(struct iot_command));
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
+    assert_non_null(server_cipher);
 
     // Given: justworks payload
     in_payload = _generate_confirminfo_payload(server_cipher, OVF_BIT_JUSTWORKS, NULL);
@@ -688,17 +722,20 @@ void TC_STATIC_es_confirminfo_handler_qr_code(void **state)
     char *in_payload;
     char *out_payload;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
 
     // Given: common
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
     context->usr_events = iot_os_eventgroup_create();
     context->iot_events = iot_os_eventgroup_create();
     context->cmd_queue = iot_os_queue_create(IOT_QUEUE_LENGTH, sizeof(struct iot_command));
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
 
     // Given: valid serial number
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
     in_payload = _generate_confirminfo_payload(server_cipher, OVF_BIT_QR, TEST_DEVICE_SERIAL_NUMBER);
     out_payload = NULL;
     // When
@@ -712,7 +749,7 @@ void TC_STATIC_es_confirminfo_handler_qr_code(void **state)
     free(out_payload);
 
     // Given: invalid serial number
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
     in_payload = _generate_confirminfo_payload(server_cipher, OVF_BIT_QR, "1234"); // invalid sn
     out_payload = NULL;
     // When
@@ -737,15 +774,19 @@ void TC_STATIC_es_confirminfo_handler_button(void **state)
     char *in_payload;
     char *out_payload;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
 
     // Given
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
     context->usr_events = iot_os_eventgroup_create();
     context->iot_events = iot_os_eventgroup_create();
     context->cmd_queue = iot_os_queue_create(IOT_QUEUE_LENGTH, sizeof(struct iot_command));
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
     in_payload = _generate_confirminfo_payload(server_cipher, OVF_BIT_BUTTON, NULL);
     out_payload = NULL;
     iot_os_eventgroup_set_bits(context->iot_events, IOT_EVENT_BIT_EASYSETUP_CONFIRM);
@@ -770,8 +811,8 @@ extern iot_error_t _es_confirm_handler(struct iot_context *ctx, char *in_payload
 static char *_generate_none_container_payload();
 static char *_generate_plain_message_payload();
 static char *_generate_wrong_container_payload();
-static char *_generate_invalid_json_payload(iot_crypto_cipher_info_t *cipher);
-static char *_generate_confirm_payload(iot_crypto_cipher_info_t *cipher, char *pin_str);
+static char *_generate_invalid_json_payload(iot_security_cipher_params_t *cipher);
+static char *_generate_confirm_payload(iot_security_cipher_params_t *cipher, char *pin_str);
 
 void TC_STATIC_es_confirm_handler_success(void** state)
 {
@@ -779,13 +820,16 @@ void TC_STATIC_es_confirm_handler_success(void** state)
     char *in_payload;
     char *out_payload;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
     char pin_for_test[9] = "12345678";
 
     // Given: valid pin 12345678
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
     in_payload = _generate_confirm_payload(server_cipher, pin_for_test);
     out_payload = NULL;
     context->curr_otm_feature = OVF_BIT_PIN;
@@ -817,7 +861,8 @@ void TC_STATIC_es_confirm_handler_invalid_pin(void** state)
     char *in_payload;
     char *out_payload;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
     iot_pin_t pin_for_device = {
             .pin = "12345678"
     };
@@ -830,8 +875,11 @@ void TC_STATIC_es_confirm_handler_invalid_pin(void** state)
 
     // Given: common
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
+    assert_non_null(server_cipher);
     context->pin = malloc(sizeof(iot_pin_t));
     memset(context->pin, '\0', sizeof(iot_pin_t));
     memcpy(context->pin, &pin_for_device, sizeof(iot_pin_t));
@@ -867,13 +915,17 @@ void TC_STATIC_es_confirm_handler_non_pin_otm(void** state)
     char *in_payload;
     char *out_payload;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
     char pin_for_test[9] = "12345678";
 
     // Given: valid pin 12345678
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
+    assert_non_null(server_cipher);
     in_payload = _generate_confirm_payload(server_cipher, pin_for_test);
     out_payload = NULL;
     context->curr_otm_feature = OVF_BIT_JUSTWORKS;
@@ -912,13 +964,17 @@ void TC_STATIC_es_confirm_handler_invalid_payload(void** state)
     char *in_payload[INVALID_PAYLOAD_MAX];
     char *out_payload;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
     char pin_for_test[9] = "12345678";
 
     // Given: invalid json format
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
+    assert_non_null(server_cipher);
     context->curr_otm_feature = OVF_BIT_PIN;
     context->devconf.ownership_validation_type = IOT_OVF_TYPE_PIN; // forced overwriting
     context->pin = malloc(sizeof(iot_pin_t));
@@ -955,13 +1011,17 @@ void TC_STATIC_es_setupcomplete_handler_success(void** state)
 {
     iot_error_t err;
     struct iot_context *context;
-    iot_crypto_cipher_info_t *server_cipher;
+    iot_security_cipher_params_t *device_cipher;
+    iot_security_cipher_params_t *server_cipher;
     char *out_payload;
 
     // Given
     context = (struct iot_context *)*state;
-    context->es_crypto_cipher_info = _generate_device_cipher(NULL, 0);
-    server_cipher = _generate_server_cipher(context->es_crypto_cipher_info->iv, context->es_crypto_cipher_info->iv_len);
+    device_cipher = _generate_device_cipher(NULL, 0);
+    err = iot_security_cipher_set_params(context->easysetup_security_context, device_cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    server_cipher = _generate_server_cipher(device_cipher->iv.p, device_cipher->iv.len);
+    assert_non_null(server_cipher);
     // When
     err = _es_setupcomplete_handler(context, NULL, &out_payload);
     // Then
@@ -988,7 +1048,7 @@ static char *_generate_wrong_container_payload()
     return strdup("{ \"key\" : \"value\" }");
 }
 
-static char *_generate_invalid_json_payload(iot_crypto_cipher_info_t *cipher)
+static char *_generate_invalid_json_payload(iot_security_cipher_params_t *cipher)
 {
     JSON_H *root;
     char *plain_message;
@@ -1015,7 +1075,7 @@ static char *_generate_invalid_json_payload(iot_crypto_cipher_info_t *cipher)
     return formed_message;
 }
 
-static char *_generate_confirm_payload(iot_crypto_cipher_info_t *cipher, char *pin_str)
+static char *_generate_confirm_payload(iot_security_cipher_params_t *cipher, char *pin_str)
 {
     JSON_H *root;
     char* plain_message;
@@ -1050,7 +1110,7 @@ static char *_generate_confirm_payload(iot_crypto_cipher_info_t *cipher, char *p
     return formed_message;
 }
 
-static char *_generate_confirminfo_payload(iot_crypto_cipher_info_t *cipher, enum ownership_validation_feature feature,
+static char *_generate_confirminfo_payload(iot_security_cipher_params_t *cipher, enum ownership_validation_feature feature,
                                     const char *serial_number_for_qr)
 {
     JSON_H *root;
@@ -1214,7 +1274,7 @@ static struct tc_key_pair* _generate_test_keypair(const unsigned char *pk_b64url
     return keypair;
 }
 
-static char* _generate_post_wifiprovisioninginfo_payload(iot_crypto_cipher_info_t *cipher, struct test_wifi_provisioning_data prov)
+static char* _generate_post_wifiprovisioninginfo_payload(iot_security_cipher_params_t *cipher, struct test_wifi_provisioning_data prov)
 {
     char *post_message;
     char *encoded_message;
@@ -1268,27 +1328,28 @@ static char* _generate_post_wifiprovisioninginfo_payload(iot_crypto_cipher_info_
     return post_message;
 }
 
-void assert_cipher_iv(iot_crypto_cipher_info_t cipher)
+void assert_iv_buffer(iot_security_buffer_t iv_buffer)
 {
     int i;
     unsigned char result = 0x00;
 
-    for (i = 0; i < cipher.iv_len; i++) {
-        result |= cipher.iv[i];
+    assert_non_null(iv_buffer.p);
+
+    for (i = 0; i < iv_buffer.len; i++) {
+        result |= iv_buffer.p[i];
     }
 
-    for (i = 0; i < cipher.iv_len; i++) {
-        if (cipher.iv[i] != 0xff) {
-            assert_int_not_equal(cipher.iv[i], result);
+    for (i = 0; i < iv_buffer.len; i++) {
+        if (iv_buffer.p[i] != 0xff) {
+            assert_int_not_equal(iv_buffer.p[i], result);
             break;
         }
     }
 
-    if (i == cipher.iv_len) {
+    if (i == iv_buffer.len) {
         // all iv[i] is 0xff
         assert_false(true);
     }
-
 }
 
 static void assert_deviceinfo(char *payload, char *expected_firmware_version, char *expected_hashed_sn)
@@ -1312,7 +1373,7 @@ static void assert_deviceinfo(char *payload, char *expected_firmware_version, ch
     JSON_DELETE(root);
 }
 
-static void assert_keyinfo(char *payload, iot_crypto_cipher_info_t *server_cipher, unsigned int expected_otm_support)
+static void assert_keyinfo(char *payload, iot_security_cipher_params_t *server_cipher, unsigned int expected_otm_support)
 {
     JSON_H *root = NULL;
     JSON_H *array = NULL;
@@ -1367,7 +1428,7 @@ static void assert_uuid_format(char *input_string)
     assert_int_equal(result, 0);
 }
 
-static void assert_lookup_id(const char *payload, iot_crypto_cipher_info_t *cipher)
+static void assert_lookup_id(const char *payload, iot_security_cipher_params_t *cipher)
 {
     JSON_H *root;
     JSON_H *item;
@@ -1439,7 +1500,7 @@ static void assert_wifiscaninfo_with_mocked_item(JSON_H *root, int n_th)
     assert_int_equal(mock_wifi_scan_result[n_th].authmode, item->valueint);
 }
 
-static void assert_wifiscaninfo_payload(iot_crypto_cipher_info_t *cipher, char *payload, int num_of_scanlist)
+static void assert_wifiscaninfo_payload(iot_security_cipher_params_t *cipher, char *payload, int num_of_scanlist)
 {
     JSON_H* root;
     JSON_H* item;
@@ -1477,7 +1538,7 @@ static void assert_wifiscaninfo_payload(iot_crypto_cipher_info_t *cipher, char *
     JSON_DELETE(root);
 }
 
-static void assert_empty_json(iot_crypto_cipher_info_t *cipher, char *payload)
+static void assert_empty_json(iot_security_cipher_params_t *cipher, char *payload)
 {
     JSON_H* root;
     JSON_H* item;
@@ -1525,29 +1586,33 @@ static void _generate_hash_token(unsigned char *hash_token, size_t hash_token_si
     }
 }
 
-static iot_crypto_cipher_info_t* _generate_cipher(unsigned char *pk, unsigned char *sk, unsigned char *iv, size_t iv_len)
+static iot_security_cipher_params_t* _generate_cipher(unsigned char *pk, unsigned char *sk, unsigned char *iv, size_t iv_len)
 {
     iot_error_t err;
+    iot_security_context_t *security_context;
+    iot_security_cipher_params_t* cipher = NULL;
     iot_crypto_ecdh_params_t ecdh_param;
     unsigned char hash_token[IOT_SECURITY_SHA256_LEN];
     unsigned char *master_secret = NULL;
-    iot_crypto_cipher_info_t* cipher = NULL;
 
     assert_non_null(pk);
     assert_non_null(sk);
 
-    cipher = (iot_crypto_cipher_info_t*) malloc(sizeof(iot_crypto_cipher_info_t));
+    security_context = iot_security_init();
+    assert_non_null(security_context);
+
+    cipher = (iot_security_cipher_params_t*) malloc(sizeof(iot_security_cipher_params_t));
     assert_non_null(cipher);
-    memset(cipher, '\0', sizeof(iot_crypto_cipher_info_t));
-    cipher->iv_len = IOT_SECURITY_IV_LEN;
-    cipher->iv = (unsigned char *) malloc(IOT_SECURITY_IV_LEN);
-    assert_non_null(cipher->iv);
+    memset(cipher, '\0', sizeof(iot_security_cipher_params_t));
+    cipher->iv.len = IOT_SECURITY_IV_LEN;
+    cipher->iv.p = (unsigned char *) malloc(IOT_SECURITY_IV_LEN);
+    assert_non_null(cipher->iv.p);
     if (iv) {
         assert_int_equal(iv_len, IOT_SECURITY_IV_LEN);
-        memcpy(cipher->iv, iv, IOT_SECURITY_IV_LEN);
+        memcpy(cipher->iv.p, iv, IOT_SECURITY_IV_LEN);
     } else {
         for (int i = 0; i < IOT_SECURITY_IV_LEN; i++) {
-            cipher->iv[i] = (unsigned char)iot_bsp_random();
+            cipher->iv.p[i] = (unsigned char)iot_bsp_random();
         }
     }
 
@@ -1564,106 +1629,128 @@ static iot_crypto_cipher_info_t* _generate_cipher(unsigned char *pk, unsigned ch
     err = iot_crypto_ecdh_gen_master_secret(master_secret, IOT_SECURITY_SECRET_LEN, &ecdh_param);
     assert_int_equal(err, IOT_ERROR_NONE);
 
-    cipher->type = IOT_CRYPTO_CIPHER_AES256;
-    cipher->key = master_secret;
-    cipher->key_len = IOT_SECURITY_SECRET_LEN;
+    cipher->type = IOT_SECURITY_KEY_TYPE_AES256;
+    cipher->key.p = master_secret;
+    cipher->key.len = IOT_SECURITY_SECRET_LEN;
+
+    err = iot_security_deinit(security_context);
+    assert_int_equal(err, IOT_ERROR_NONE);
 
     return cipher;
 }
 
-static iot_crypto_cipher_info_t* _generate_server_cipher(unsigned char *iv_data, size_t iv_length)
+static iot_security_cipher_params_t* _generate_server_cipher(unsigned char *iv_data, size_t iv_length)
 {
     return _generate_cipher(DEVICE_KEYPAIR->curve25519_pk, SERVER_KEYPAIR->curve25519_sk, iv_data, iv_length);
 }
 
-static iot_crypto_cipher_info_t* _generate_device_cipher(unsigned char *iv_data, size_t iv_length)
+static iot_security_cipher_params_t* _generate_device_cipher(unsigned char *iv_data, size_t iv_length)
 {
     return _generate_cipher(SERVER_KEYPAIR->curve25519_pk, DEVICE_KEYPAIR->curve25519_sk, iv_data, iv_length);
 }
 
-static void _free_cipher(iot_crypto_cipher_info_t *cipher)
+static void _free_cipher(iot_security_cipher_params_t *cipher)
 {
     assert_non_null(cipher);
-    if (cipher->iv) {
-        free(cipher->iv);
-        cipher->iv = NULL;
+    if (cipher->iv.p) {
+        free(cipher->iv.p);
+        cipher->iv.p = NULL;
+        cipher->iv.len = 0;
     }
-    if (cipher->key) {
-        free(cipher->key);
-        cipher->key = NULL;
+    if (cipher->key.p) {
+        free(cipher->key.p);
+        cipher->key.p = NULL;
+        cipher->key.len = 0;
     }
 
     free(cipher);
 }
 
-static char *_encrypt_and_encode_message(iot_crypto_cipher_info_t *cipher, unsigned char *message, size_t message_length)
+static char *_encrypt_and_encode_message(iot_security_cipher_params_t *cipher, unsigned char *message, size_t message_length)
 {
-    size_t aes256_len;
+    iot_error_t err;
+    iot_security_context_t *security_context = NULL;
     size_t b64_aes256_len;
     size_t out_length;
-    unsigned char *aes256_message;
+    iot_security_buffer_t message_buffer = { 0 };
+    iot_security_buffer_t aes256_message_buffer = { 0 };
     unsigned char *b64url_aes256_message;
-    iot_error_t err;
 
     assert_non_null(cipher);
     assert_non_null(message);
     assert_true(message_length > 0);
 
-    aes256_len = iot_crypto_cipher_get_align_size(IOT_CRYPTO_CIPHER_AES256, message_length);
-    aes256_message = (unsigned char *) malloc(aes256_len);
-    assert_non_null(aes256_message);
-    cipher->mode = IOT_CRYPTO_CIPHER_ENCRYPT;
-    err = iot_crypto_cipher_aes(cipher, message, message_length, aes256_message, &out_length, aes256_len);
+    security_context = iot_security_init();
+    assert_non_null(security_context);
+    err = iot_security_cipher_init(security_context);
     assert_int_equal(err, IOT_ERROR_NONE);
 
-    aes256_len = out_length;
-    b64_aes256_len = IOT_SECURITY_B64_ENCODE_LEN(aes256_len);
+    err = iot_security_cipher_set_params(security_context, cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+
+    message_buffer.p = message;
+    message_buffer.len = message_length;
+    err = iot_security_cipher_aes_encrypt(security_context, &message_buffer, &aes256_message_buffer);
+    assert_int_equal(err, IOT_ERROR_NONE);
+
+    b64_aes256_len = IOT_SECURITY_B64_ENCODE_LEN(aes256_message_buffer.len);
     b64url_aes256_message = (unsigned char *) malloc(b64_aes256_len);
     assert_non_null(b64url_aes256_message);
-    err = iot_security_base64_encode_urlsafe(aes256_message, aes256_len, b64url_aes256_message, b64_aes256_len, &out_length);
+    err = iot_security_base64_encode_urlsafe(aes256_message_buffer.p, aes256_message_buffer.len, b64url_aes256_message,
+					b64_aes256_len, &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
 
-    free(aes256_message);
+    free(aes256_message_buffer.p);
+
+    err = iot_security_cipher_deinit(security_context);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    err = iot_security_deinit(security_context);
+    assert_int_equal(err, IOT_ERROR_NONE);
+
     return b64url_aes256_message;
 }
 
-static char *_decode_and_decrypt_message(iot_crypto_cipher_info_t *cipher, unsigned char *b64url_aes256_message, size_t b64url_aes256_message_length)
+static char *_decode_and_decrypt_message(iot_security_cipher_params_t *cipher, unsigned char *b64url_aes256_message, size_t b64url_aes256_message_length)
 {
     iot_error_t err;
-    unsigned char *aes256_message;
-    unsigned char *plain_message;
-    size_t aes256_message_buffer_length;
+    iot_security_context_t *security_context = NULL;
+    iot_security_buffer_t plain_message_buffer = { 0 };
+    iot_security_buffer_t aes256_message_buffer = { 0 };
     size_t aes256_message_actual_length;
-    size_t plain_message_buffer_length;
-    size_t plain_message_actual_length;
     assert_non_null(cipher);
     assert_non_null(b64url_aes256_message);
     assert_true(b64url_aes256_message_length > 0);
 
+    // Given	
+    security_context = iot_security_init();
+    assert_non_null(security_context);
+    err = iot_security_cipher_init(security_context);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    err = iot_security_cipher_set_params(security_context, cipher);
+    assert_int_equal(err, IOT_ERROR_NONE);
+
     // Decode
-    aes256_message_buffer_length = IOT_SECURITY_B64_DECODE_LEN(b64url_aes256_message_length);
-    aes256_message = malloc(aes256_message_buffer_length);
+    aes256_message_buffer.len = IOT_SECURITY_B64_DECODE_LEN(b64url_aes256_message_length);
+    aes256_message_buffer.p = malloc(aes256_message_buffer.len);
+    assert_non_null(aes256_message_buffer.p);
 
     err = iot_security_base64_decode_urlsafe(b64url_aes256_message, b64url_aes256_message_length,
-                                           aes256_message, aes256_message_buffer_length, &aes256_message_actual_length);
+					aes256_message_buffer.p, aes256_message_buffer.len,
+					&aes256_message_actual_length);
     assert_int_equal(err, IOT_ERROR_NONE);
-
 
     // Decrypt
-    plain_message_buffer_length = iot_crypto_cipher_get_align_size(IOT_CRYPTO_CIPHER_AES256, aes256_message_actual_length);
-    plain_message = malloc(plain_message_buffer_length);
-    memset(plain_message, '\0', plain_message_buffer_length);
-
-    cipher->mode = IOT_CRYPTO_CIPHER_DECRYPT;
-    err = iot_crypto_cipher_aes(cipher, aes256_message, aes256_message_actual_length,
-                                plain_message, &plain_message_actual_length, plain_message_buffer_length);
+    aes256_message_buffer.len = aes256_message_actual_length;
+    err = iot_security_cipher_aes_decrypt(security_context, &aes256_message_buffer, &plain_message_buffer);
     assert_int_equal(err, IOT_ERROR_NONE);
 
-    // null termination
-    if (plain_message_actual_length < plain_message_buffer_length)
-        *(plain_message + plain_message_actual_length) = '\0';
+    free(aes256_message_buffer.p);
 
-    free(aes256_message);
+    // Teardown
+    err = iot_security_cipher_deinit(security_context);
+    assert_int_equal(err, IOT_ERROR_NONE);
+    err = iot_security_deinit(security_context);
+    assert_int_equal(err, IOT_ERROR_NONE);
 
-    return plain_message;
+    return (char *)plain_message_buffer.p;
 }

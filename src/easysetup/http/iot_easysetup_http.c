@@ -24,6 +24,7 @@
 #include "iot_debug.h"
 #include "iot_easysetup.h"
 #include "iot_bsp_wifi.h"
+#include "security/iot_security_common.h"
 
 static struct iot_context *context;
 
@@ -445,16 +446,9 @@ void iot_easysetup_deinit(struct iot_context *ctx)
 
 	es_http_deinit();
 
-	if (ctx->es_crypto_cipher_info) {
-		if (ctx->es_crypto_cipher_info->iv) {
-			free(ctx->es_crypto_cipher_info->iv);
-			ctx->es_crypto_cipher_info->iv = NULL;
-		}
-
-		if (ctx->es_crypto_cipher_info->key) {
-			free(ctx->es_crypto_cipher_info->key);
-			ctx->es_crypto_cipher_info->key = NULL;
-		}
+	if (ctx->easysetup_security_context) {
+		iot_security_deinit(ctx->easysetup_security_context);
+		ctx->easysetup_security_context = NULL;
 	}
 #if defined(CONFIG_STDK_IOT_CORE_EASYSETUP_HTTP_LOG_SUPPORT)
 	if (log_buffer) {
