@@ -1501,21 +1501,21 @@ static void assert_empty_json(iot_crypto_cipher_info_t *cipher, char *payload)
 
 static void _generate_hash_token(unsigned char *hash_token, size_t hash_token_size)
 {
-    unsigned char rand_ascii[IOT_CRYPTO_SHA256_LEN * 2 + 1] = {0 };
+    unsigned char rand_ascii[IOT_SECURITY_SHA256_LEN * 2 + 1] = {0 };
     iot_error_t err;
     char tmp[3] = {0};
     size_t out_length;
     int i, j;
 
     assert_non_null(hash_token_size);
-    assert_true(hash_token_size >= IOT_CRYPTO_SHA256_LEN);
+    assert_true(hash_token_size >= IOT_SECURITY_SHA256_LEN);
 
     memset(rand_ascii, '\0', sizeof(rand_ascii));
     err = iot_crypto_base64_decode((const unsigned char*)TEST_SRAND, strlen(TEST_SRAND),
                                    rand_ascii, sizeof(rand_ascii),
                                    &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
-    assert_int_equal(out_length, IOT_CRYPTO_SHA256_LEN * 2);
+    assert_int_equal(out_length, IOT_SECURITY_SHA256_LEN * 2);
 
     for (i = 0, j = 0; i < sizeof(rand_ascii) - 1; i += 2, j++) {
         memcpy(tmp, rand_ascii + i, 2);
@@ -1528,7 +1528,7 @@ static iot_crypto_cipher_info_t* _generate_cipher(unsigned char *pk, unsigned ch
 {
     iot_error_t err;
     iot_crypto_ecdh_params_t ecdh_param;
-    unsigned char hash_token[IOT_CRYPTO_SHA256_LEN];
+    unsigned char hash_token[IOT_SECURITY_SHA256_LEN];
     unsigned char *master_secret = NULL;
     iot_crypto_cipher_info_t* cipher = NULL;
 
@@ -1556,7 +1556,7 @@ static iot_crypto_cipher_info_t* _generate_cipher(unsigned char *pk, unsigned ch
     ecdh_param.s_pubkey = pk;
     ecdh_param.t_seckey = sk;
     ecdh_param.hash_token = hash_token;
-    ecdh_param.hash_token_len = IOT_CRYPTO_SHA256_LEN;
+    ecdh_param.hash_token_len = IOT_SECURITY_SHA256_LEN;
     master_secret = malloc(IOT_SECURITY_SECRET_LEN + 1);
     assert_non_null(master_secret);
     memset(master_secret, '\0', IOT_SECURITY_SECRET_LEN + 1);

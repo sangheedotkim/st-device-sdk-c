@@ -27,6 +27,7 @@
 #include "iot_nv_data.h"
 #include "iot_util.h"
 #include "iot_debug.h"
+#include "security/iot_security_helper.h"
 
 #define HASH_SIZE (4)
 #define PIN_SIZE	8
@@ -261,8 +262,8 @@ iot_error_t _es_time_set(unsigned char *time)
 iot_error_t iot_easysetup_create_ssid(struct iot_devconf_prov_data *devconf, char *ssid, size_t ssid_len)
 {
 	char *serial = NULL;
-	unsigned char hash_buffer[IOT_CRYPTO_SHA256_LEN] = { 0, };
-	unsigned char base64url_buffer[IOT_CRYPTO_CAL_B64_LEN(IOT_CRYPTO_SHA256_LEN)] = { 0, };
+	unsigned char hash_buffer[IOT_SECURITY_SHA256_LEN] = { 0, };
+	unsigned char base64url_buffer[IOT_CRYPTO_CAL_B64_LEN(IOT_SECURITY_SHA256_LEN)] = { 0, };
 	size_t base64_written = 0;
 	char ssid_build[33] = { 0, };
 	unsigned char last_sn[HASH_SIZE + 1] = { 0,};
@@ -278,7 +279,7 @@ iot_error_t iot_easysetup_create_ssid(struct iot_devconf_prov_data *devconf, cha
 		IOT_ERROR("Failed to get serial number : %d\n", err);
 		goto out;
 	}
-	err = iot_crypto_sha256((unsigned char*)serial, length, hash_buffer);
+	err = iot_security_sha256((unsigned char*)serial, length, hash_buffer, sizeof(hash_buffer));
 	if (err != IOT_ERROR_NONE) {
 		IOT_ERROR("Failed sha256 (str: %s, len: %zu\n", serial, length);
 		goto out;
@@ -491,7 +492,7 @@ iot_error_t _es_keyinfo_handler(struct iot_context *ctx, char *in_payload, char 
 	char *final_msg = NULL;
 	char *enc_msg = NULL;
 	char tmp[3] = {0};
-	char rand_asc[IOT_CRYPTO_SHA256_LEN * 2 + 1] = { 0 };
+	char rand_asc[IOT_SECURITY_SHA256_LEN * 2 + 1] = { 0 };
 	JSON_H *recv = NULL;
 	JSON_H *root = NULL;
 	JSON_H *array = NULL;
@@ -502,7 +503,7 @@ iot_error_t _es_keyinfo_handler(struct iot_context *ctx, char *in_payload, char 
 	unsigned char val;
 	unsigned char key_tsec_curve[IOT_CRYPTO_ED25519_LEN];
 	unsigned char key_spub_sign[IOT_CRYPTO_ED25519_LEN];
-	unsigned char key_rand[IOT_CRYPTO_SHA256_LEN];
+	unsigned char key_rand[IOT_SECURITY_SHA256_LEN];
 	unsigned char *decode_buf = NULL;
 	unsigned char *master_secret = NULL;
 	unsigned char *p_spub_str = NULL;
