@@ -1538,14 +1538,14 @@ static iot_crypto_cipher_info_t* _generate_cipher(unsigned char *pk, unsigned ch
     cipher = (iot_crypto_cipher_info_t*) malloc(sizeof(iot_crypto_cipher_info_t));
     assert_non_null(cipher);
     memset(cipher, '\0', sizeof(iot_crypto_cipher_info_t));
-    cipher->iv_len = IOT_CRYPTO_IV_LEN;
-    cipher->iv = (unsigned char *) malloc(IOT_CRYPTO_IV_LEN);
+    cipher->iv_len = IOT_SECURITY_IV_LEN;
+    cipher->iv = (unsigned char *) malloc(IOT_SECURITY_IV_LEN);
     assert_non_null(cipher->iv);
     if (iv) {
-        assert_int_equal(iv_len, IOT_CRYPTO_IV_LEN);
-        memcpy(cipher->iv, iv, IOT_CRYPTO_IV_LEN);
+        assert_int_equal(iv_len, IOT_SECURITY_IV_LEN);
+        memcpy(cipher->iv, iv, IOT_SECURITY_IV_LEN);
     } else {
-        for (int i = 0; i < IOT_CRYPTO_IV_LEN; i++) {
+        for (int i = 0; i < IOT_SECURITY_IV_LEN; i++) {
             cipher->iv[i] = (unsigned char)iot_bsp_random();
         }
     }
@@ -1557,15 +1557,15 @@ static iot_crypto_cipher_info_t* _generate_cipher(unsigned char *pk, unsigned ch
     ecdh_param.t_seckey = sk;
     ecdh_param.hash_token = hash_token;
     ecdh_param.hash_token_len = IOT_CRYPTO_SHA256_LEN;
-    master_secret = malloc(IOT_CRYPTO_SECRET_LEN + 1);
+    master_secret = malloc(IOT_SECURITY_SECRET_LEN + 1);
     assert_non_null(master_secret);
-    memset(master_secret, '\0', IOT_CRYPTO_SECRET_LEN + 1);
-    err = iot_crypto_ecdh_gen_master_secret(master_secret, IOT_CRYPTO_SECRET_LEN, &ecdh_param);
+    memset(master_secret, '\0', IOT_SECURITY_SECRET_LEN + 1);
+    err = iot_crypto_ecdh_gen_master_secret(master_secret, IOT_SECURITY_SECRET_LEN, &ecdh_param);
     assert_int_equal(err, IOT_ERROR_NONE);
 
     cipher->type = IOT_CRYPTO_CIPHER_AES256;
     cipher->key = master_secret;
-    cipher->key_len = IOT_CRYPTO_SECRET_LEN;
+    cipher->key_len = IOT_SECURITY_SECRET_LEN;
 
     return cipher;
 }
