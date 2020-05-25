@@ -30,6 +30,7 @@
 #include <regex.h>
 #include <errno.h>
 #include <iot_util.h>
+#include <security/iot_security_helper.h>
 #include "TC_MOCK_functions.h"
 
 #define UNUSED(x) (void**)(x)
@@ -1110,7 +1111,7 @@ static char *_generate_post_keyinfo_payload(int year, char *time_to_set, size_t 
     iot_error_t err;
     size_t out_length;
     unsigned char *curve25519_server_pk_b64;
-    size_t curve25519_server_pk_b64_len = IOT_CRYPTO_CAL_B64_LEN(IOT_CRYPTO_ED25519_LEN) + 1;
+    size_t curve25519_server_pk_b64_len = IOT_SECURITY_B64_ENCODE_LEN(IOT_CRYPTO_ED25519_LEN) + 1;
     char datetime[32];
     char regionaldatetime[32];
     char timezoneid[16];
@@ -1131,7 +1132,7 @@ static char *_generate_post_keyinfo_payload(int year, char *time_to_set, size_t 
 
     curve25519_server_pk_b64 = malloc(curve25519_server_pk_b64_len);
     memset(curve25519_server_pk_b64, '\0', curve25519_server_pk_b64_len);
-    err = iot_crypto_base64_encode_urlsafe(SERVER_KEYPAIR->curve25519_pk, sizeof(SERVER_KEYPAIR->curve25519_pk),
+    err = iot_security_base64_encode_urlsafe(SERVER_KEYPAIR->curve25519_pk, sizeof(SERVER_KEYPAIR->curve25519_pk),
                                            curve25519_server_pk_b64, curve25519_server_pk_b64_len, &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
 
@@ -1150,20 +1151,20 @@ static char *_generate_post_keyinfo_payload(int year, char *time_to_set, size_t 
     test_time = mktime(&test_tm);
     snprintf(time_to_set, time_to_set_len, "%ld", test_time);
 
-    b64url_datetime = (unsigned char*) malloc(IOT_CRYPTO_CAL_B64_LEN(strlen(datetime)));
-    b64url_regionaldatetime = (unsigned char*) malloc(IOT_CRYPTO_CAL_B64_LEN(strlen(regionaldatetime)));
-    b64url_timezoneid = (unsigned char*) malloc(IOT_CRYPTO_CAL_B64_LEN(strlen(timezoneid)));
+    b64url_datetime = (unsigned char*) malloc(IOT_SECURITY_B64_ENCODE_LEN(strlen(datetime)));
+    b64url_regionaldatetime = (unsigned char*) malloc(IOT_SECURITY_B64_ENCODE_LEN(strlen(regionaldatetime)));
+    b64url_timezoneid = (unsigned char*) malloc(IOT_SECURITY_B64_ENCODE_LEN(strlen(timezoneid)));
 
-    err = iot_crypto_base64_encode_urlsafe(datetime, strlen(datetime),
-            b64url_datetime, IOT_CRYPTO_CAL_B64_LEN(strlen(datetime)), &out_length);
+    err = iot_security_base64_encode_urlsafe(datetime, strlen(datetime),
+            b64url_datetime, IOT_SECURITY_B64_ENCODE_LEN(strlen(datetime)), &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
 
-    err = iot_crypto_base64_encode_urlsafe(regionaldatetime, strlen(regionaldatetime),
-            b64url_regionaldatetime, IOT_CRYPTO_CAL_B64_LEN(strlen(regionaldatetime)), &out_length);
+    err = iot_security_base64_encode_urlsafe(regionaldatetime, strlen(regionaldatetime),
+            b64url_regionaldatetime, IOT_SECURITY_B64_ENCODE_LEN(strlen(regionaldatetime)), &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
 
-    err = iot_crypto_base64_encode_urlsafe(timezoneid, strlen(timezoneid),
-            b64url_timezoneid, IOT_CRYPTO_CAL_B64_LEN(strlen(datetime)), &out_length);
+    err = iot_security_base64_encode_urlsafe(timezoneid, strlen(timezoneid),
+            b64url_timezoneid, IOT_SECURITY_B64_ENCODE_LEN(strlen(datetime)), &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
 
     root = JSON_CREATE_OBJECT();
@@ -1194,12 +1195,12 @@ static struct tc_key_pair* _generate_test_keypair(const unsigned char *pk_b64url
     assert_non_null(keypair);
     memset(keypair, '\0', sizeof(struct tc_key_pair));
 
-    err = iot_crypto_base64_decode(pk_b64url, pk_b64url_len,
+    err = iot_security_base64_decode(pk_b64url, pk_b64url_len,
                                            keypair->ed25519_pk, sizeof(keypair->ed25519_pk), &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
     assert_int_equal(out_length, IOT_CRYPTO_ED25519_LEN);
 
-    err = iot_crypto_base64_decode(sk_b64url, sk_b64url_len,
+    err = iot_security_base64_decode(sk_b64url, sk_b64url_len,
                                            keypair->ed25519_sk, sizeof(keypair->ed25519_sk), &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
     assert_int_equal(out_length, IOT_CRYPTO_ED25519_LEN);
@@ -1511,7 +1512,7 @@ static void _generate_hash_token(unsigned char *hash_token, size_t hash_token_si
     assert_true(hash_token_size >= IOT_SECURITY_SHA256_LEN);
 
     memset(rand_ascii, '\0', sizeof(rand_ascii));
-    err = iot_crypto_base64_decode((const unsigned char*)TEST_SRAND, strlen(TEST_SRAND),
+    err = iot_security_base64_decode((const unsigned char*)TEST_SRAND, strlen(TEST_SRAND),
                                    rand_ascii, sizeof(rand_ascii),
                                    &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
@@ -1616,10 +1617,10 @@ static char *_encrypt_and_encode_message(iot_crypto_cipher_info_t *cipher, unsig
     assert_int_equal(err, IOT_ERROR_NONE);
 
     aes256_len = out_length;
-    b64_aes256_len = IOT_CRYPTO_CAL_B64_LEN(aes256_len);
+    b64_aes256_len = IOT_SECURITY_B64_ENCODE_LEN(aes256_len);
     b64url_aes256_message = (unsigned char *) malloc(b64_aes256_len);
     assert_non_null(b64url_aes256_message);
-    err = iot_crypto_base64_encode_urlsafe(aes256_message, aes256_len, b64url_aes256_message, b64_aes256_len, &out_length);
+    err = iot_security_base64_encode_urlsafe(aes256_message, aes256_len, b64url_aes256_message, b64_aes256_len, &out_length);
     assert_int_equal(err, IOT_ERROR_NONE);
 
     free(aes256_message);
@@ -1640,10 +1641,10 @@ static char *_decode_and_decrypt_message(iot_crypto_cipher_info_t *cipher, unsig
     assert_true(b64url_aes256_message_length > 0);
 
     // Decode
-    aes256_message_buffer_length = IOT_CRYPTO_CAL_B64_DEC_LEN(b64url_aes256_message_length);
+    aes256_message_buffer_length = IOT_SECURITY_B64_DECODE_LEN(b64url_aes256_message_length);
     aes256_message = malloc(aes256_message_buffer_length);
 
-    err = iot_crypto_base64_decode_urlsafe(b64url_aes256_message, b64url_aes256_message_length,
+    err = iot_security_base64_decode_urlsafe(b64url_aes256_message, b64url_aes256_message_length,
                                            aes256_message, aes256_message_buffer_length, &aes256_message_actual_length);
     assert_int_equal(err, IOT_ERROR_NONE);
 
